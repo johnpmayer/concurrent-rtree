@@ -1,21 +1,19 @@
 
 {-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-} -- Spatial/Bounds constraint
+{-# LANGUAGE FlexibleContexts #-}
 
 module Bounds where
 
-import Control.Concurrent.STM
-
-class Bounds b where
-  data UnitsT b
-  intersect :: b -> b -> Bool
+class (Ord (UnitsT b), Num (UnitsT b)) => Bounds b where
+  type UnitsT b
+  intersects :: b -> b -> Bool
   contains :: b -> b -> Bool
   cover :: b -> b -> b
   size :: b -> UnitsT b
 
 class Bounds (BoundsT a) => Spatial a where
-  data BoundsT
+  type BoundsT a
   bounds :: a -> BoundsT a
 
 data BoundTagged b a = BoundTagged {

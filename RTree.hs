@@ -5,6 +5,8 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module RTree (findIntersecting, findOverlapping) where
 
 import Control.Applicative
@@ -65,12 +67,27 @@ bestIndex target vec =
   let increase element = size (cover target element) - size element
   in V.minIndex $ V.map (increase . getBounds) vec
 
+
 locateCurrentPath :: R a => KeyT a -> RTree n a -> STM (Maybe (VecNat n Int))
 locateCurrentPath target node = 
-  case node of
+
+  let tryAccum :: R a => KeyT a -> Maybe (VecNat (S n) Int) -> (Int, RTree n a) -> STM (Maybe (VecNat (S n) Int))
+      tryAccum (target' :: KeyT a) mLocated (index, childNode :: RTree n a) = 
+        case mLocated of
+          Just _ -> return mLocated
+          Nothing -> do
+            childLocated <- locateCurrentPath target' childNode
+            return $ Cons index <$> childLocated
+
+  in case node of
     Leaf vecVar -> do
       vec <- readTVar vecVar 
       return $ flip Cons Nil <$> V.findIndex ((==target) . getElem) vec
+    Node (vecVar :: TVar (VecBoundTagged a (RTree n a))) -> do
+      vec <- readTVar vecVar
+      query <- (bounds :: a -> BoundsT a) <$> (unstore :: KeyT a -> STM a) target 
+      let matches = V.indexed $ matchIntersecting (intersects query) vec
+      V.foldM (tryAccum target) Nothing matches
 
 locateBestPath :: R a => KeyT a -> RTree n a -> VecNat n Int
 locateBestPath target node = 

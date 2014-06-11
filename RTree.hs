@@ -162,9 +162,10 @@ insert cfg boundedTarget node =
       case insertVec cfg boundedTarget vec of
         VecInsert newVec -> do
           writeTVar vecVar newVec
-          if vecCover vec `contains` getBounds boundedTarget
-          then return InsertNoExpand
-          else return . Insert $ vecCover newVec
+          return $
+            if vecCover vec `contains` getBounds boundedTarget
+            then InsertNoExpand
+            else Insert $ vecCover newVec
         VecSplit newVec1 newVec2 -> 
           Split <$> (Bounded (vecCover newVec1) . Leaf <$> newTVar newVec1)
                 <*> (Bounded (vecCover newVec2) . Leaf <$> newTVar newVec2)
@@ -181,9 +182,10 @@ insert cfg boundedTarget node =
           let newBoundedChild = Bounded newChildBounds child
               newVec = vec V.// [(best,newBoundedChild)]
           writeTVar vecVar newVec
-          if vecCover vec `contains` newChildBounds
-          then return InsertNoExpand
-          else return . Insert $ vecCover newVec
+          return $
+            if vecCover vec `contains` newChildBounds
+            then InsertNoExpand
+            else Insert $ vecCover newVec
         Split newChild1 newChild2 ->
           undefined -- smoosh
 

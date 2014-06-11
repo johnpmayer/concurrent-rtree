@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -13,11 +14,19 @@ import Control.Monad
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Concurrent.STM
+import Prelude hiding (Bounded)
 
 import Bounds
 import TStore
 
 import Natural -- Replace this with another type-natural library
+
+{- A vector of spatial elements, tagged with bounds -}
+
+type VecBound b a = Vector (Bounded b a)
+
+vecCover :: Bounds (BoundsT b) => VecBound b a -> BoundsT b
+vecCover = V.foldl cover Bounds.empty . V.map getBounds
 
 {- Rtree is transactional vector of tagged pointers -}
 
@@ -26,10 +35,14 @@ data RConfig = RConfig
   , minElems :: Int
   }
 
-data RVecInsert b a = Insert (VecBound b a) 
-                 | Split (VecBound b a) (VecBound b a)
+data RVecInsert b a 
+  = VecInsert (VecBound b a) 
+  | VecSplit (VecBound b a) (VecBound b a)
 
-type VecBound b a = Vector (BoundTagged b a)
+data RInsert n a 
+  = InsertNoExpand
+  | Insert (BoundsT a)  
+  | Split (Bounded a (RTree n a)) (Bounded a (RTree n a))
 
 data RTree :: Nat -> * -> * where
   Leaf :: TVar (VecBound a (KeyT a)) -> RTree Z a
@@ -133,20 +146,44 @@ locateBestPath target node =
 bestSplit :: VecBound b a -> (VecBound b a, VecBound b a)
 bestSplit = undefined
 
-insertVec :: RConfig -> BoundTagged b a -> VecBound b a -> RVecInsert b a
+insertVec :: RConfig -> Bounded b a -> VecBound b a -> RVecInsert b a
 insertVec cfg target vec =
   let smoosh = V.cons target vec
   in if V.length smoosh > maxElems cfg
-      then uncurry Split $ bestSplit smoosh
-      else Insert smoosh
+      then uncurry VecSplit $ bestSplit smoosh
+      else VecInsert smoosh
 
-insert :: R a => RConfig -> BoundTagged a (KeyT a) -> RTree n a -> STM ()
+insert :: R a => RConfig -> Bounded a (KeyT a) -> RTree n a -> STM (RInsert n a)
 insert cfg boundedTarget node =
   case node of
+
     Leaf vecVar -> do
       vec <- readTVar vecVar
       case insertVec cfg boundedTarget vec of
-        Insert new -> undefined
-        Split new1 new2 -> undefined
+        VecInsert newVec -> do
+          writeTVar vecVar newVec
+          if vecCover vec `contains` getBounds boundedTarget
+          then return InsertNoExpand
+          else return . Insert $ vecCover newVec
+        VecSplit newVec1 newVec2 -> 
+          Split <$> (Bounded (vecCover newVec1) . Leaf <$> newTVar newVec1)
+                <*> (Bounded (vecCover newVec2) . Leaf <$> newTVar newVec2)
+
     Node vecVar -> do
-      undefined
+      vec <- readTVar vecVar
+      let best = bestIndex (getBounds boundedTarget) vec
+          boundedChild = vec V.! best
+          child = getElem boundedChild
+      childInsert <- insert cfg boundedTarget child
+      case childInsert of
+        InsertNoExpand -> return InsertNoExpand
+        Insert newChildBounds -> do
+          let newBoundedChild = Bounded newChildBounds child
+              newVec = vec V.// [(best,newBoundedChild)]
+          writeTVar vecVar newVec
+          if vecCover vec `contains` newChildBounds
+          then return InsertNoExpand
+          else return . Insert $ vecCover newVec
+        Split newChild1 newChild2 ->
+          undefined -- smoosh
+

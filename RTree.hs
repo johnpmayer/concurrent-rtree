@@ -4,12 +4,12 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
-
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module RTree (findIntersecting, findOverlapping) where
+module RTree where
 
 import Control.Applicative
+import Control.Monad
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Concurrent.STM
@@ -32,8 +32,8 @@ type R a = (TStored a, Spatial a)
 
 {- Utility functions -}
 
-matchIntersecting :: (BoundsT a -> Bool) -> VecBoundTagged a b -> Vector b
-matchIntersecting predicate = V.map getElem . V.filter (predicate . getBounds)
+matchPred :: (BoundsT b -> Bool) -> VecBoundTagged b a -> Vector a
+matchPred predicate = V.map getElem . V.filter (predicate . getBounds)
 
 foldDF :: 
   R a => 
@@ -43,30 +43,50 @@ foldDF predicate accum initial node =
   case node of
     Leaf vecVar -> do
       vec <- readTVar vecVar
-      let matches = matchIntersecting predicate vec
+      let matches = matchPred predicate vec
       V.foldM accum initial matches
     Node vecVar -> do
       vec <- readTVar vecVar
-      let matches = matchIntersecting predicate vec
+      let matches = matchPred predicate vec
       V.foldM (foldDF predicate accum) initial matches
+
+matchPred2 :: 
+  (BoundsT b -> BoundsT b -> Bool) -> 
+  VecBoundTagged b a -> VecBoundTagged b a -> 
+  [(a,a)]
+matchPred2 predicate2 vec1 vec2 = 
+  V.foldl (\acc1 e1 -> 
+    V.foldl (\acc2 e2 -> if predicate2 (getBounds e1) (getBounds e2) 
+                         then (getElem e1, getElem e2) : acc2 
+                         else acc2) acc1 vec2) [] vec1
+
+
 
 foldDFPairs :: 
   R a => 
-  (BoundsT a -> BoundsT a -> Bool) -> (b -> KeyT a -> KeyT a -> STM b) -> 
+  (BoundsT a -> BoundsT a -> Bool) -> (b -> (KeyT a, KeyT a) -> STM b) -> 
   b -> RTree n a -> RTree n a -> STM b
 foldDFPairs predicate2 accum2 initial nodeA nodeB = 
   case (nodeA, nodeB) of
-    (Leaf vecVarA, Leaf vecVarB) -> do
+    (Leaf vecVarA, Leaf vecVarB) -> do 
       vecA <- readTVar vecVarA
       vecB <- readTVar vecVarB
-      undefined
-    (Node vecVarA, Node vecVarB) -> do undefined
+      let matches = matchPred2 predicate2 vecA vecB
+      foldM accum2 initial matches
+    (Node vecVarA, Node vecVarB) -> do 
+      vecA <- readTVar vecVarA
+      vecB <- readTVar vecVarB
+      let matches = matchPred2 predicate2 vecA vecB
+          doPair initial' (a,b) = foldDFPairs predicate2 accum2 initial' a b
+      foldM doPair initial matches
 
 bestIndex :: R a => BoundsT a -> VecBoundTagged a b -> Int 
 bestIndex target vec = 
   let increase element = size (cover target element) - size element
   in V.minIndex $ V.map (increase . getBounds) vec
 
+bestSplit :: VecBoundTagged b a -> (VecBoundTagged b a, VecBoundTagged b a)
+bestSplit = undefined
 
 locateCurrentPath :: R a => KeyT a -> RTree n a -> STM (Maybe (VecNat n Int))
 locateCurrentPath target node = 
@@ -86,19 +106,29 @@ locateCurrentPath target node =
     Node (vecVar :: TVar (VecBoundTagged a (RTree n a))) -> do
       vec <- readTVar vecVar
       query <- (bounds :: a -> BoundsT a) <$> (unstore :: KeyT a -> STM a) target 
-      let matches = V.indexed $ matchIntersecting (intersects query) vec
+      let matches = V.indexed $ matchPred (intersects query) vec
       V.foldM (tryAccum target) Nothing matches
 
+{-
 locateBestPath :: R a => KeyT a -> RTree n a -> VecNat n Int
 locateBestPath target node = 
   case node of
     Leaf vecVar -> undefined
     Node vecVar -> undefined
+    -}
 
 {- Read-only operations -}
 
-findIntersecting :: R a => BoundsT a -> RTree n a -> STM [KeyT a]
-findIntersecting query = foldDF (intersects query) (\ks k -> return (k:ks)) []
+find :: R a => BoundsT a -> RTree n a -> STM [KeyT a]
+find query = foldDF (intersects query) (\ks k -> return (k:ks)) []
 
-findOverlapping :: R a => BoundsT a -> RTree n a -> STM [(KeyT a, KeyT a)]
-findOverlapping = undefined
+findCollisions :: R a => RTree n a -> STM [(KeyT a, KeyT a)]
+findCollisions node = foldDFPairs intersects 
+                                  (\ks (ka,kb) -> return ((ka,kb):ks)) [] 
+                                  node node
+
+{- Read-write operations -}
+
+insert :: R a => KeyT a -> RTree n a -> STM ()
+insert target node = undefined target node
+

@@ -16,7 +16,7 @@ class Bounds (BoundsT a) => Spatial a where
   type BoundsT a
   bounds :: a -> BoundsT a
 
-data BoundTagged b a = BoundTagged {
-  getBounds :: BoundsT b,
-  getElem :: a
-}
+data BoundTagged b a = BoundTagged 
+  { getBounds :: BoundsT b
+  , getElem :: a
+  }

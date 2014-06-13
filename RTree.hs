@@ -144,14 +144,13 @@ locateBestPath target node =
       return $ Cons best rest
 
 bestSplit :: VecBound b a -> (VecBound b a, VecBound b a)
-bestSplit = undefined
+bestSplit = undefined -- TODO
 
-insertVec :: RConfig -> Bounded b a -> VecBound b a -> RVecInsert b a
-insertVec cfg target vec =
-  let smoosh = V.cons target vec
-  in if V.length smoosh > maxElems cfg
-      then uncurry VecSplit $ bestSplit smoosh
-      else VecInsert smoosh
+checkInsertVec :: RConfig -> VecBound b a -> RVecInsert b a
+checkInsertVec cfg smoosh =
+  if V.length smoosh > maxElems cfg
+  then uncurry VecSplit $ bestSplit smoosh
+  else VecInsert smoosh
 
 insert :: R a => RConfig -> Bounded a (KeyT a) -> RTree n a -> STM (RInsert n a)
 insert cfg boundedTarget node =
@@ -159,7 +158,8 @@ insert cfg boundedTarget node =
 
     Leaf vecVar -> do
       vec <- readTVar vecVar
-      case insertVec cfg boundedTarget vec of
+      let smoosh = V.cons boundedTarget vec
+      case checkInsertVec cfg smoosh of
         VecInsert newVec -> do
           writeTVar vecVar newVec
           return $
@@ -187,5 +187,20 @@ insert cfg boundedTarget node =
             then InsertNoExpand
             else Insert $ vecCover newVec
         Split newChild1 newChild2 ->
-          undefined -- smoosh
+          let leftRem = V.take best vec
+              rightRem = V.drop (best + 1) vec
+              smoosh = V.concat [ leftRem
+                                , rightRem
+                                , V.singleton newChild1
+                                , V.singleton newChild2 ]
+          in case checkInsertVec cfg smoosh of
+            VecInsert newVec -> do 
+              writeTVar vecVar newVec
+              return $
+                if vecCover vec `contains` getBounds boundedChild
+                then InsertNoExpand
+                else Insert $ vecCover newVec
+            VecSplit newVec1 newVec2 -> 
+              Split <$> (Bounded (vecCover newVec1) . Node <$> newTVar newVec1)
+                    <*> (Bounded (vecCover newVec2) . Node <$> newTVar newVec2)
 

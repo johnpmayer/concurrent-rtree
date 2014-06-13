@@ -11,6 +11,7 @@ module RTree where
 
 import Control.Applicative
 import Control.Monad
+import qualified Data.List as L
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Control.Concurrent.STM
@@ -143,13 +144,33 @@ locateBestPath target node =
       rest <- locateBestPath target child
       return $ Cons best rest
 
-bestSplit :: VecBound b a -> (VecBound b a, VecBound b a)
-bestSplit = undefined -- TODO
+-- Quadratic Split with minimum element checks
+bestSplit :: Bounds (BoundsT b) => RConfig -> VecBound b a -> (VecBound b a, VecBound b a)
+bestSplit cfg vec = 
+  let pairs = [ (a,b) | a <- [0..(V.length vec - 1)], b <- [0..(a-1)] ]
+      vBounds idx = getBounds $ vec V.! idx
+      pairSize a b = size $ cover (vBounds a) (vBounds b)
+      comparePairs a b = compare (uncurry pairSize a) (uncurry pairSize b)
+      (worst1,worst2) = L.maximumBy comparePairs pairs
+      remIndices = [a | a <- [0..(V.length vec - 1)], a /= worst1, a /= worst2]
+      remaining = reverse $ [0 .. length remIndices - 1]
+      segregate ((c1, c2),(l1,l2)) (tgt,remain) = 
+        let size1 = size $ cover (vBounds worst1) (vBounds tgt)
+            size2 = size $ cover (vBounds worst2) (vBounds tgt)
+            forceLeft = remain + c1 == minElems cfg
+            forceRight = remain + c2 == minElems cfg
+        in
+          if (size1 < size2 || forceLeft) && not forceRight
+          then ((c1 + 1, c2),(tgt:l1,l2))
+          else ((c1, c2 + 1),(l1,tgt:l2))
+      (list1, list2) = snd $ foldl segregate ((1,1),([worst1],[worst2])) $ 
+                        zip remIndices remaining
+  in (V.map (vec V.!) $ V.fromList list1, V.map (vec V.!) $ V.fromList list2)
 
-checkInsertVec :: RConfig -> VecBound b a -> RVecInsert b a
+checkInsertVec :: Bounds (BoundsT b) => RConfig -> VecBound b a -> RVecInsert b a
 checkInsertVec cfg smoosh =
   if V.length smoosh > maxElems cfg
-  then uncurry VecSplit $ bestSplit smoosh
+  then uncurry VecSplit $ bestSplit cfg smoosh
   else VecInsert smoosh
 
 insert :: R a => RConfig -> Bounded a (KeyT a) -> RTree n a -> STM (RInsert n a)

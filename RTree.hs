@@ -169,8 +169,8 @@ checkInsertVec cfg smoosh =
   else VecInsert smoosh
 
 data RInsert n a 
-  = InsertNoExpand
-  | Insert (BoundsT a)  
+  = NoExpand
+  | Expand (BoundsT a)  
   | Split (Bounded a (RTree n a)) (Bounded a (RTree n a))
 
 insert :: R a => RConfig -> Bounded a (KeyT a) -> RTree n a -> STM (RInsert n a)
@@ -185,8 +185,8 @@ insert cfg boundedTarget node =
           writeTVar vecVar newVec
           return $
             if vecCover vec `contains` getBounds boundedTarget
-            then InsertNoExpand
-            else Insert $ vecCover newVec
+            then NoExpand
+            else Expand $ vecCover newVec
         VecSplit newVec1 newVec2 -> 
           Split <$> (Bounded (vecCover newVec1) . Leaf <$> newTVar newVec1)
                 <*> (Bounded (vecCover newVec2) . Leaf <$> newTVar newVec2)
@@ -198,15 +198,15 @@ insert cfg boundedTarget node =
           child = getElem boundedChild
       childInsert <- insert cfg boundedTarget child
       case childInsert of
-        InsertNoExpand -> return InsertNoExpand
-        Insert newChildBounds -> do
+        NoExpand -> return NoExpand
+        Expand newChildBounds -> do
           let newBoundedChild = Bounded newChildBounds child
               newVec = vec V.// [(best,newBoundedChild)]
           writeTVar vecVar newVec
           return $
             if vecCover vec `contains` newChildBounds
-            then InsertNoExpand
-            else Insert $ vecCover newVec
+            then NoExpand
+            else Expand $ vecCover newVec
         Split newChild1 newChild2 ->
           let leftRem = V.take best vec
               rightRem = V.drop (best + 1) vec
@@ -219,8 +219,8 @@ insert cfg boundedTarget node =
               writeTVar vecVar newVec
               return $
                 if vecCover vec `contains` getBounds boundedChild
-                then InsertNoExpand
-                else Insert $ vecCover newVec
+                then NoExpand
+                else Expand $ vecCover newVec
             VecSplit newVec1 newVec2 -> 
               Split <$> (Bounded (vecCover newVec1) . Node <$> newTVar newVec1)
                     <*> (Bounded (vecCover newVec2) . Node <$> newTVar newVec2)
@@ -242,23 +242,28 @@ update key f (node :: RTree n a) = do
 markDead :: VecNat (S n) Int -> RTree n a -> STM ()
 markDead = undefined
 
-upsert :: R a => 
-  Bounded a (KeyT a) -> VecNat (S n) Int -> RTree n a -> STM ()
-upsert newBoundedKey (Cons index path) node =
+upsert :: R a => RConfig ->
+  Bounded a (KeyT a) -> VecNat (S n) Int -> RTree n a -> 
+  STM (RInsert n a)
+upsert cfg newBoundedKey (Cons index path) node =
   case node of
 
     Leaf vecVar -> do
       vec <- readTVar vecVar 
       let newVec = vec V.// [(index, newBoundedKey)]
       writeTVar vecVar newVec
+      return $
+        if vecCover vec `contains` getBounds newBoundedKey
+        then NoExpand
+        else Expand $ vecCover newVec
 
     Node vecVar -> do
       vec <- readTVar vecVar
       let best = bestIndex (getBounds newBoundedKey) vec
           child = getElem $ vec V.! index
-      if best == index
-      then do
-        upsert newBoundedKey path child
+      childResult <- if best == index
+      then upsert cfg newBoundedKey path child
       else do
         markDead path child
-        undefined
+        insert cfg newBoundedKey child
+      undefined childResult

@@ -37,7 +37,7 @@ data RConfig = RConfig
   }
 
 data RTree :: Nat -> * -> * where
-  Leaf :: TVar (VecBound a (KeyT a)) -> RTree Z a
+  Leaf :: TVar (VecBound a (Maybe (KeyT a))) -> RTree Z a
   Node :: TVar (VecBound a (RTree n a)) -> RTree (S n) a
 
 type R a = (TStored a, Spatial a)
@@ -47,7 +47,7 @@ matchPred predicate = V.map getElem . V.filter (predicate . getBounds)
 
 foldDF :: 
   R a => 
-  (BoundsT a -> Bool) -> (b -> KeyT a -> STM b) -> 
+  (BoundsT a -> Bool) -> (b -> Maybe (KeyT a) -> STM b) -> 
   b -> RTree n a -> STM b 
 foldDF predicate accum initial node = 
   case node of
@@ -72,7 +72,8 @@ matchPred2 predicate2 vec1 vec2 =
 
 foldDFPairs :: 
   R a => 
-  (BoundsT a -> BoundsT a -> Bool) -> (b -> (KeyT a, KeyT a) -> STM b) -> 
+  (BoundsT a -> BoundsT a -> Bool) -> 
+  (b -> (Maybe (KeyT a), Maybe (KeyT a)) -> STM b) -> 
   b -> RTree n a -> RTree n a -> STM b
 foldDFPairs predicate2 accum2 initial nodeA nodeB = 
   case (nodeA, nodeB) of
@@ -89,12 +90,14 @@ foldDFPairs predicate2 accum2 initial nodeA nodeB =
       foldM doPair initial matches
 
 find :: R a => BoundsT a -> RTree n a -> STM [KeyT a]
-find query = foldDF (intersects query) (\ks k -> return (k:ks)) []
+find query = foldDF (intersects query) (\ks mk -> return $ maybe ks (:ks) mk) []
 
 findCollisions :: R a => RTree n a -> STM [(KeyT a, KeyT a)]
-findCollisions node = foldDFPairs intersects 
-                                  (\ks (ka,kb) -> return ((ka,kb):ks)) [] 
-                                  node node
+findCollisions node = 
+  let accum ks (mka,mkb) = return $ case (mka, mkb) of
+        (Just ka, Just kb) -> (ka,kb):ks
+        _                  -> ks
+  in foldDFPairs intersects accum [] node node
 
 locateCurrentPath :: R a => Bounded a (KeyT a) -> RTree n a -> STM (Maybe (VecNat (S n) Int))
 locateCurrentPath boundedKey node = 
@@ -110,7 +113,7 @@ locateCurrentPath boundedKey node =
   in case node of
     Leaf vecVar -> do
       vec <- readTVar vecVar 
-      return $ singleton <$> V.findIndex ((== getElem boundedKey) . getElem) vec
+      return $ singleton <$> V.findIndex ((== Just (getElem boundedKey)) . getElem) vec
     Node (vecVar :: TVar (VecBound a (RTree n a))) -> do
       vec <- readTVar vecVar
       let query = getBounds boundedKey
@@ -173,13 +176,16 @@ data RInsert n a
   | Expand (BoundsT a)  
   | Split (Bounded a (RTree n a)) (Bounded a (RTree n a))
 
-insert :: R a => RConfig -> Bounded a (KeyT a) -> RTree n a -> STM (RInsert n a)
+insert :: R a => RConfig -> 
+  Bounded a (KeyT a) -> RTree n a -> 
+  STM (RInsert n a)
 insert cfg boundedTarget node =
   case node of
 
     Leaf vecVar -> do
       vec <- readTVar vecVar
-      let smoosh = V.cons boundedTarget vec
+      let jTarget = Bounded (getBounds boundedTarget) $ Just (getElem boundedTarget)
+          smoosh = V.cons jTarget vec
       case checkInsertVec cfg smoosh of
         VecInsert newVec -> do
           writeTVar vecVar newVec
@@ -225,32 +231,42 @@ insert cfg boundedTarget node =
               Split <$> (Bounded (vecCover newVec1) . Node <$> newTVar newVec1)
                     <*> (Bounded (vecCover newVec2) . Node <$> newTVar newVec2)
 
-update :: R a => KeyT a -> (a -> a) -> RTree n a -> STM ()
-update key f (node :: RTree n a) = do
+upsert :: R a => RConfig -> KeyT a -> (a -> a) -> RTree n a -> STM ()
+upsert cfg key f (node :: RTree n a) = do
   (value :: a) <- derefStore key
   let (b :: BoundsT a) = bounds value
       boundedKey = Bounded b key
   (mPath :: Maybe (VecNat (S n) Int)) <- locateCurrentPath boundedKey node
-  case mPath of
-    Nothing -> undefined
-    Just path -> 
-      let newValue = f value
-          (newB :: BoundsT a) = bounds newValue
-          (newBoundedValue :: Bounded a a) = Bounded newB newValue
-      in undefined 
+  let newValue = f value
+      (newB :: BoundsT a) = bounds newValue
+      (newBoundedKey :: Bounded a (KeyT a)) = Bounded newB key
+  modStore key newValue
+  insertResult <- case mPath of
+    Nothing -> insert cfg newBoundedKey node
+    Just path -> update cfg newBoundedKey path node
+  undefined insertResult
  
-markDead :: VecNat (S n) Int -> RTree n a -> STM ()
-markDead = undefined
+markDead :: R a => VecNat (S n) Int -> RTree n a -> STM ()
+markDead path node = case (path,node) of
+  (Cons index Nil, Leaf vecVar) -> do
+    vec <- readTVar vecVar
+    let nothingKey = Bounded Bounds.empty Nothing
+        newVec = vec V.// [(index, nothingKey)]
+    writeTVar vecVar newVec
+  (Cons index childPath, Node vecVar) -> do
+    vec <- readTVar vecVar
+    markDead childPath . getElem $ vec V.! index
 
-upsert :: R a => RConfig ->
+update :: R a => RConfig ->
   Bounded a (KeyT a) -> VecNat (S n) Int -> RTree n a -> 
   STM (RInsert n a)
-upsert cfg newBoundedKey (Cons index path) node =
+update cfg newBoundedKey (Cons index path) node =
   case node of
 
     Leaf vecVar -> do
       vec <- readTVar vecVar 
-      let newVec = vec V.// [(index, newBoundedKey)]
+      let jKey = Bounded (getBounds newBoundedKey) $ Just (getElem newBoundedKey)
+          newVec = vec V.// [(index, jKey)]
       writeTVar vecVar newVec
       return $
         if vecCover vec `contains` getBounds newBoundedKey
@@ -262,7 +278,7 @@ upsert cfg newBoundedKey (Cons index path) node =
       let best = bestIndex (getBounds newBoundedKey) vec
           child = getElem $ vec V.! index
       childResult <- if best == index
-      then upsert cfg newBoundedKey path child
+      then update cfg newBoundedKey path child
       else do
         markDead path child
         insert cfg newBoundedKey child

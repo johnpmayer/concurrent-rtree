@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 
 module RTree where
 
@@ -201,19 +202,29 @@ insert cfg boundedTarget node =
       vec <- readTVar vecVar
       let best = bestIndex (getBounds boundedTarget) vec
           boundedChild = vec V.! best
-          child = getElem boundedChild
-      childInsert <- insert cfg boundedTarget child
+      childInsert <- insert cfg boundedTarget $ getElem boundedChild
+      handleInsert cfg vecVar vec best boundedChild childInsert
+
+handleInsert :: R a =>
+ RConfig ->
+ TVar (VecBound a (RTree n a)) ->
+ VecBound a (RTree n a) ->
+ Int ->
+ Bounded a (RTree n a) ->
+ RInsert n a ->
+ STM (RInsert ('S n) a)
+handleInsert cfg vecVar vec best boundedChild childInsert =
       case childInsert of
         NoExpand -> return NoExpand
         Expand newChildBounds -> do
-          let newBoundedChild = Bounded newChildBounds child
+          let newBoundedChild = Bounded newChildBounds $ getElem boundedChild
               newVec = vec V.// [(best,newBoundedChild)]
           writeTVar vecVar newVec
           return $
             if vecCover vec `contains` newChildBounds
             then NoExpand
             else Expand $ vecCover newVec
-        Split newChild1 newChild2 ->
+        Split newChild1 newChild2 -> 
           let leftRem = V.take best vec
               rightRem = V.drop (best + 1) vec
               smoosh = V.concat [ leftRem
@@ -231,7 +242,7 @@ insert cfg boundedTarget node =
               Split <$> (Bounded (vecCover newVec1) . Node <$> newTVar newVec1)
                     <*> (Bounded (vecCover newVec2) . Node <$> newTVar newVec2)
 
-upsert :: R a => RConfig -> KeyT a -> (a -> a) -> RTree n a -> STM ()
+upsert :: R a => RConfig -> KeyT a -> (a -> a) -> RTree n a -> STM (RInsert n a)
 upsert cfg key f (node :: RTree n a) = do
   (value :: a) <- derefStore key
   let (b :: BoundsT a) = bounds value
@@ -241,10 +252,10 @@ upsert cfg key f (node :: RTree n a) = do
       (newB :: BoundsT a) = bounds newValue
       (newBoundedKey :: Bounded a (KeyT a)) = Bounded newB key
   modStore key newValue
-  insertResult <- case mPath of
+  childInsert <- case mPath of
     Nothing -> insert cfg newBoundedKey node
     Just path -> update cfg newBoundedKey path node
-  undefined insertResult
+  return childInsert
  
 markDead :: R a => VecNat (S n) Int -> RTree n a -> STM ()
 markDead path node = case (path,node) of
@@ -276,10 +287,11 @@ update cfg newBoundedKey (Cons index path) node =
     Node vecVar -> do
       vec <- readTVar vecVar
       let best = bestIndex (getBounds newBoundedKey) vec
-          child = getElem $ vec V.! index
-      childResult <- if best == index
+          boundedChild = vec V.! index
+          child = getElem boundedChild
+      childInsert <- if best == index
       then update cfg newBoundedKey path child
       else do
         markDead path child
         insert cfg newBoundedKey child
-      undefined childResult
+      handleInsert cfg vecVar vec best boundedChild childInsert

@@ -13,15 +13,15 @@ module RTree where
 import Control.Applicative
 import Control.Monad
 import qualified Data.List as L
+import Data.Type.Natural
 import Data.Vector (Vector)
+import qualified Data.Vector.Sized as SV
 import qualified Data.Vector as V
 import Control.Concurrent.STM
 import Prelude hiding (Bounded)
 
 import Bounds
 import TStore
-
-import Natural -- Replace this with another type-natural library
 
 {- A vector of spatial elements, tagged with bounds -}
 
@@ -100,21 +100,21 @@ findCollisions node =
         _                  -> ks
   in foldDFPairs intersects accum [] node node
 
-locateCurrentPath :: R a => Bounded a (KeyT a) -> RTree n a -> STM (Maybe (VecNat (S n) Int))
+locateCurrentPath :: R a => Bounded a (KeyT a) -> RTree n a -> STM (Maybe (SV.Vector Int (S n)))
 locateCurrentPath boundedKey node = 
 
-  let tryAccum :: R a => Bounded a (KeyT a) -> Maybe (VecNat (S (S n)) Int) -> (Int, RTree n a) -> STM (Maybe (VecNat (S (S n)) Int))
+  let tryAccum :: R a => Bounded a (KeyT a) -> Maybe (SV.Vector Int (S (S n))) -> (Int, RTree n a) -> STM (Maybe (SV.Vector Int (S (S n))))
       tryAccum target mLocated (index, childNode :: RTree n a) = 
         case mLocated of
           Just _ -> return mLocated
           Nothing -> do
             childLocated <- locateCurrentPath target childNode
-            return $ Cons index <$> childLocated
+            return $ (index SV.:-) <$> childLocated
 
   in case node of
     Leaf vecVar -> do
       vec <- readTVar vecVar 
-      return $ singleton <$> V.findIndex ((== Just (getElem boundedKey)) . getElem) vec
+      return $ SV.singleton <$> V.findIndex ((== Just (getElem boundedKey)) . getElem) vec
     Node (vecVar :: TVar (VecBound a (RTree n a))) -> do
       vec <- readTVar vecVar
       let query = getBounds boundedKey
@@ -126,18 +126,18 @@ bestIndex target vec =
   let increase element = size (cover target element) - size element
   in V.minIndex $ V.map (increase . getBounds) vec
 
-locateBestPath :: R a => BoundsT a -> RTree n a -> STM (VecNat (S n) Int)
+locateBestPath :: R a => BoundsT a -> RTree n a -> STM (SV.Vector Int (S n))
 locateBestPath target node = 
   case node of
     Leaf vecVar -> do
       vec <- readTVar vecVar      
-      return $ singleton (bestIndex target vec)
+      return $ SV.singleton (bestIndex target vec)
     Node vecVar -> do
       vec <- readTVar vecVar
       let best = bestIndex target vec
           child = getElem $ vec V.! best
       rest <- locateBestPath target child
-      return $ Cons best rest
+      return $ best SV.:- rest
 
 -- Quadratic Split with minimum element checks
 bestSplit :: Bounds (BoundsT b) => RConfig -> VecBound b a -> (VecBound b a, VecBound b a)
@@ -247,7 +247,7 @@ upsert cfg key f (node :: RTree n a) = do
   (value :: a) <- derefStore key
   let (b :: BoundsT a) = bounds value
       boundedKey = Bounded b key
-  (mPath :: Maybe (VecNat (S n) Int)) <- locateCurrentPath boundedKey node
+  (mPath :: Maybe (SV.Vector Int (S n))) <- locateCurrentPath boundedKey node
   let newValue = f value
       (newB :: BoundsT a) = bounds newValue
       (newBoundedKey :: Bounded a (KeyT a)) = Bounded newB key
@@ -257,21 +257,21 @@ upsert cfg key f (node :: RTree n a) = do
     Just path -> update cfg newBoundedKey path node
   return childInsert
  
-markDead :: R a => VecNat (S n) Int -> RTree n a -> STM ()
+markDead :: R a => SV.Vector Int (S n) -> RTree n a -> STM ()
 markDead path node = case (path,node) of
-  (Cons index Nil, Leaf vecVar) -> do
+  (index SV.:- SV.Nil, Leaf vecVar) -> do
     vec <- readTVar vecVar
     let nothingKey = Bounded Bounds.empty Nothing
         newVec = vec V.// [(index, nothingKey)]
     writeTVar vecVar newVec
-  (Cons index childPath, Node vecVar) -> do
+  (index SV.:- childPath, Node vecVar) -> do
     vec <- readTVar vecVar
     markDead childPath . getElem $ vec V.! index
 
 update :: R a => RConfig ->
-  Bounded a (KeyT a) -> VecNat (S n) Int -> RTree n a -> 
+  Bounded a (KeyT a) -> SV.Vector Int (S n) -> RTree n a -> 
   STM (RInsert n a)
-update cfg newBoundedKey (Cons index path) node =
+update cfg newBoundedKey (index SV.:- path) node =
   case node of
 
     Leaf vecVar -> do

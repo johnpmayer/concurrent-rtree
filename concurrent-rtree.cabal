@@ -16,5 +16,9 @@ cabal-version:        >=1.10
 
 library
   exposed-modules:      Bounds, RTree
-  build-depends:        base >=4.6 && <4.7, stm >=2.4 && <2.5, vector >=0.10 && <0.11
+  build-depends:        base >=4.6 && <4.7, 
+                        sized-vector >=1.4 && <1.5,
+                        stm >=2.4 && <2.5, 
+                        type-natural >=0.2.1 && <0.2.2,
+                        vector >=0.10 && <0.11
   default-language:     Haskell2010

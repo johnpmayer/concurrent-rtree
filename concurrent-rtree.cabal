@@ -15,7 +15,7 @@ build-type:           Simple
 cabal-version:        >=1.10
 
 library
-  exposed-modules:      Bounds, RTree
+  exposed-modules:      Bounds, RTree, Test
   build-depends:        base >=4.6 && <4.7, 
                         sized-vector >=1.4 && <1.5,
                         stm >=2.4 && <2.5, 

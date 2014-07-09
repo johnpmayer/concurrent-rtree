@@ -3,14 +3,14 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Test where
+module Test.Types where
 
 import Control.Concurrent.STM
 import Prelude hiding (min,max)
 import qualified Prelude as Pr
 
-import Bounds 
-import TStore
+import Data.RTree.Bounds 
+import Data.RTree.TStore
 
 data Vec2F = Vec2F
   { x :: Float

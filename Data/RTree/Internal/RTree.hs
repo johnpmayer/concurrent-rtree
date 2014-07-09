@@ -8,7 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 
-module RTree where
+module Data.RTree.Internal.RTree where
 
 import Control.Applicative
 import Control.Monad
@@ -20,8 +20,8 @@ import qualified Data.Vector as V
 import Control.Concurrent.STM
 import Prelude hiding (Bounded)
 
-import Bounds
-import TStore
+import Data.RTree.Bounds as Bounds
+import Data.RTree.TStore
 
 {- A vector of spatial elements, tagged with bounds -}
 
@@ -36,6 +36,9 @@ data RConfig = RConfig
   { maxElems :: Int
   , minElems :: Int
   }
+
+defaultConfig :: RConfig
+defaultConfig = RConfig 8 2
 
 data RTree :: Nat -> * -> * where
   Leaf :: TVar (VecBound a (Maybe (KeyT a))) -> RTree Z a

@@ -3,7 +3,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Bounds where
+module Data.RTree.Bounds where
 
 class (Ord (UnitsT b), Num (UnitsT b)) => Bounds b where
   type UnitsT b

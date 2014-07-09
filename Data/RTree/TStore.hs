@@ -3,7 +3,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module TStore where
+module Data.RTree.TStore where
 
 import Control.Concurrent.STM
 

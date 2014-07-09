@@ -5,9 +5,12 @@
 
 module Test where
 
-import Bounds 
+import Control.Concurrent.STM
 import Prelude hiding (min,max)
 import qualified Prelude as Pr
+
+import Bounds 
+import TStore
 
 data Vec2F = Vec2F
   { x :: Float
@@ -63,4 +66,17 @@ instance Spatial Ship where
         maxx = (x.pos$ship) + rad ship
         maxy = (y.pos$ship) + rad ship
     in Just $ Box2F (Vec2F minx miny) (Vec2F maxx maxy)
+
+data ActiveShip = ActiveShip
+  { shipID :: Int
+  , shipVar :: TVar Ship
+  }
+
+instance Eq ActiveShip where
+  as1 == as2 = (shipID as1 == shipID as2)
+
+instance TStored Ship where
+  type KeyT Ship = ActiveShip
+  derefStore active = readTVar (shipVar active)
+  modStore active new = writeTVar (shipVar active) new
 

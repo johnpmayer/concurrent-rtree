@@ -16,7 +16,7 @@ class (Ord (UnitsT b), Num (UnitsT b)) => Bounds b where
 data Bounded b a = Bounded 
   { getBounds :: BoundsT b
   , getElem :: a
-  }
+  } 
 
 class Bounds (BoundsT a) => Spatial a where
   type BoundsT a

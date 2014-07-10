@@ -15,7 +15,7 @@ import Data.RTree.TStore
 data Vec2F = Vec2F
   { x :: Float
   , y :: Float
-  }
+  } deriving Show
 
 data Box2F = Box2F
   { min :: Vec2F
@@ -56,7 +56,7 @@ data Ship = Ship
   { pos :: Vec2F
   , vel :: Vec2F
   , rad :: Float
-  }
+  } deriving Show
 
 instance Spatial Ship where
   type BoundsT Ship = Maybe Box2F

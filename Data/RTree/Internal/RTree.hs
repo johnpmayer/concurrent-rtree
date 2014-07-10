@@ -11,13 +11,13 @@
 module Data.RTree.Internal.RTree where
 
 import Control.Applicative
+import Control.Concurrent.STM
 import Control.Monad
 import qualified Data.List as L
 import Data.Type.Natural
 import Data.Vector (Vector)
 import qualified Data.Vector.Sized as SV
 import qualified Data.Vector as V
-import Control.Concurrent.STM
 import Prelude hiding (Bounded)
 
 import Data.RTree.Bounds as Bounds
@@ -38,11 +38,14 @@ data RConfig = RConfig
   }
 
 defaultConfig :: RConfig
-defaultConfig = RConfig 8 2
+defaultConfig = RConfig 8 2 
 
 data RTree :: Nat -> * -> * where
   Leaf :: TVar (VecBound a (Maybe (KeyT a))) -> RTree Z a
   Node :: TVar (VecBound a (RTree n a)) -> RTree (S n) a
+
+empty :: STM (RTree Z a)
+empty = Leaf <$> (newTVar $ V.empty)
 
 type R a = (TStored a, Spatial a)
 
@@ -179,6 +182,11 @@ data RInsert n a
   = NoExpand
   | Expand (BoundsT a)  
   | Split (Bounded a (RTree n a)) (Bounded a (RTree n a))
+
+instance Show (RInsert n a) where
+  show NoExpand = "NoExpand"
+  show (Expand _) = "Expand:"
+  show (Split _ _) = "Split!"
 
 insert :: R a => RConfig -> 
   Bounded a (KeyT a) -> RTree n a -> 
